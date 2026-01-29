@@ -217,7 +217,9 @@ Contributions are welcome!
 This project is open-source and available under the **MIT License**.
 
 ---
-
-Made with 💻 & ☕ by **[Pugazhmani.K]**
+``` bash
+Made with 💻 & ☕ by Pugazhmani.K
+Powered by CyberWolf
 
 ```
+
