@@ -10,7 +10,7 @@ import Link from "next/link";
 export default function DashboardPage() {
   const { user, loading: authLoading } = useAuth();
   
-  // 1. Local state to hold the Database Data (where 'stats' actually lives)
+  // 1. Local state to hold the Database Data
   const [userData, setUserData] = useState<any>(null);
   const [loadingData, setLoadingData] = useState(true);
 
