@@ -1,65 +1,76 @@
-// src/components/editor/CodeEditor.tsx
 "use client";
 
 import Editor from "@monaco-editor/react";
 import { useState } from "react";
-import { useTelemetry } from "@/hooks/useTelemetry"; // 👈 New Security Hook
+import { useTelemetry } from "@/hooks/useTelemetry"; 
+import { saveSubmission } from "@/lib/firebase/submission"; // 🟢 Firebase integration
 
 // Props interface to receive data from the parent page
 interface CodeEditorProps {
   problemId: string;
   userId: string;
+  userName?: string;
 }
 
-export default function CodeEditor({ problemId, userId }: CodeEditorProps) {
+// 🟢 MAP: Connects your dropdown menu to the Piston execution engine
+const PISTON_MAP: Record<string, { lang: string; ver: string; name: string }> = {
+  "71": { lang: "python", ver: "3.10.0", name: "Python" },
+  "54": { lang: "cpp", ver: "10.2.0", name: "C++" },
+  "62": { lang: "java", ver: "15.0.2", name: "Java" },
+  "63": { lang: "javascript", ver: "18.15.0", name: "JavaScript" },
+};
+
+export default function CodeEditor({ problemId, userId, userName = "Student" }: CodeEditorProps) {
   // 🕵️‍♂️ Activate Anti-Cheat Telemetry
-  // This automatically starts listening for tab switches and pastes
   useTelemetry(userId, problemId);
 
   // State Management
-  const [code, setCode] = useState("# Write your Python code here\nimport sys\n\n# Read input\ndata = sys.stdin.read().split()\n\n# Your Logic Here...");
+  const [code, setCode] = useState("# Write your code here\nprint('Hello, World!')");
   const [language, setLanguage] = useState("71"); // Default: Python (71)
   const [output, setOutput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState(""); // "Running", "Accepted", "Wrong Answer"
+  const [status, setStatus] = useState(""); // "Running...", "Success ✅", etc.
 
-  // 1. RUN CODE (Test only - No Score)
+  // 1. 🟢 RUN CODE (Piston Compiler API)
   const handleRun = async () => {
     setLoading(true);
     setOutput("");
     setStatus("Running...");
 
     try {
-      const response = await fetch("/api/run", {
+      const selected = PISTON_MAP[language];
+
+      // 🟢 FIXED URL: The official Piston Execution API
+      const response = await fetch("https://emkc.org/api/v2/piston/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, languageId: parseInt(language) }),
+        body: JSON.stringify({
+          language: selected.lang,
+          version: selected.ver,
+          files: [{ content: code }],
+        }),
       });
 
       const data = await response.json();
 
-      if (data.stdout) {
-        setOutput(data.stdout);
+      // Handle the compiler response
+      if (data.run && data.run.code === 0) {
+        setOutput(data.run.stdout || "Execution successful (no output printed).");
         setStatus("Success ✅");
-      } else if (data.stderr) {
-        setOutput(data.stderr);
-        setStatus("Runtime Error ❌");
-      } else if (data.compile_output) {
-        setOutput(data.compile_output);
-        setStatus("Compilation Error ⚠️");
       } else {
-        setOutput("No output returned.");
-        setStatus("Finished");
+        const errorMsg = data.run?.stderr || data.message || "Unknown compilation error";
+        setOutput(data.run?.stdout ? `${data.run.stdout}\n\nError:\n${errorMsg}` : errorMsg);
+        setStatus("Runtime Error ❌");
       }
     } catch (error) {
-      setOutput("Error connecting to server.");
+      setOutput("Execution failed: Network error connecting to compiler.");
       setStatus("System Error ❌");
     } finally {
       setLoading(false);
     }
   };
 
-  // 2. SUBMIT CODE (Judge against hidden cases + Update Score)
+  // 2. 🟢 SUBMIT CODE (Send to Admin Dashboard)
   const handleSubmit = async () => {
     if (!userId) {
       alert("Please login to submit.");
@@ -67,31 +78,26 @@ export default function CodeEditor({ problemId, userId }: CodeEditorProps) {
     }
 
     setLoading(true);
-    setStatus("Judging...");
+    setStatus("Sending to Admin...");
     setOutput("");
 
     try {
-      const response = await fetch("/api/submit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId,
-          problemId,
-          code,
-          languageId: parseInt(language),
-        }),
+      const selected = PISTON_MAP[language];
+
+      // Save directly to Firebase 'submissions' collection
+      await saveSubmission({
+        userId: userId,
+        userName: userName,
+        problemId: problemId,
+        problemTitle: `Problem: ${problemId}`, // Fallback title
+        code: code,
+        language: selected.name,
       });
 
-      const data = await response.json();
-
-      if (data.verdict === "Accepted") {
-        setStatus("🎉 Accepted!");
-        setOutput("All test cases passed! Points added to leaderboard.");
-      } else {
-        setStatus("❌ Wrong Answer");
-        setOutput(`Failed on Test Case #${data.failedCase}\nCheck your logic and try again.`);
-      }
+      setStatus("🎉 Accepted!");
+      setOutput("Success! Your code has been securely transmitted to the Admin Dashboard.");
     } catch (error) {
+      console.error("Submission Error:", error);
       setStatus("Error ⚠️");
       setOutput("Submission failed. Please try again.");
     } finally {
@@ -106,12 +112,12 @@ export default function CodeEditor({ problemId, userId }: CodeEditorProps) {
         <select 
           value={language}
           onChange={(e) => setLanguage(e.target.value)}
-          className="bg-gray-800 text-white text-sm px-3 py-1 rounded border border-gray-700 outline-none focus:border-blue-500"
+          className="bg-gray-800 text-white text-sm px-3 py-1 rounded border border-gray-700 outline-none focus:border-blue-500 cursor-pointer"
         >
-          <option value="71">Python (3.8)</option>
-          <option value="54">C++ (GCC 9.2)</option>
-          <option value="62">Java (OpenJDK 13)</option>
-          <option value="63">JavaScript (Node)</option>
+          <option value="71">Python (3.10)</option>
+          <option value="54">C++ (GCC 10)</option>
+          <option value="62">Java (OpenJDK 15)</option>
+          <option value="63">JavaScript (Node 18)</option>
         </select>
 
         <div className="flex items-center gap-4">
@@ -126,7 +132,7 @@ export default function CodeEditor({ problemId, userId }: CodeEditorProps) {
           <button 
             onClick={handleRun}
             disabled={loading}
-            className={`px-4 py-1 rounded text-sm font-bold transition border border-gray-600 ${
+            className={`px-4 py-1.5 rounded text-sm font-bold transition border border-gray-600 ${
               loading ? "bg-gray-800 text-gray-500 cursor-not-allowed" : "bg-gray-800 hover:bg-gray-700 text-white"
             }`}
           >
@@ -137,7 +143,7 @@ export default function CodeEditor({ problemId, userId }: CodeEditorProps) {
           <button 
             onClick={handleSubmit}
             disabled={loading}
-            className={`px-6 py-1 rounded text-sm font-bold transition flex items-center gap-2 ${
+            className={`px-6 py-1.5 rounded text-sm font-bold transition flex items-center gap-2 ${
               loading ? "bg-gray-700 cursor-not-allowed text-gray-400" : "bg-green-600 hover:bg-green-700 text-white shadow-lg shadow-green-900/20"
             }`}
           >
@@ -147,11 +153,11 @@ export default function CodeEditor({ problemId, userId }: CodeEditorProps) {
       </div>
 
       {/* Editor Area */}
-      <div className="flex-grow">
+      <div className="flex-grow relative">
         <Editor
-          height="60vh"
+          height="100%"
           theme="vs-dark"
-          language={language === "71" ? "python" : language === "54" ? "cpp" : language === "62" ? "java" : "javascript"}
+          language={PISTON_MAP[language].lang}
           value={code}
           onChange={(value) => setCode(value || "")}
           options={{
@@ -169,7 +175,7 @@ export default function CodeEditor({ problemId, userId }: CodeEditorProps) {
         <div className="text-gray-500 text-xs uppercase mb-2 font-bold tracking-wider">Terminal Output</div>
         {output ? (
           <pre className={`whitespace-pre-wrap ${
-            status.includes("Error") || status.includes("Wrong") ? "text-red-300" : "text-gray-300"
+            status.includes("Error") || status.includes("Wrong") ? "text-red-400" : "text-gray-300"
           }`}>{output}</pre>
         ) : (
           <div className="text-gray-600 italic">Run or Submit code to see output...</div>

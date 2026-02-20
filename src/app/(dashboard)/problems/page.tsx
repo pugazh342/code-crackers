@@ -71,8 +71,9 @@ export default function ProblemsPage() {
                   {problem.category}
                 </td>
                 <td className="px-6 py-4 text-right">
+                  {/* 🔐 THE FIX: Base64 Encode the ID in the URL */}
                   <Link 
-                    href={`/problems/${problem.id}`} 
+                    href={`/problems/${btoa(problem.id)}`} 
                     className="inline-flex items-center gap-1 text-blue-600 font-bold text-xs uppercase tracking-wide opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0"
                   >
                     Solve <ArrowRight className="w-3 h-3" />

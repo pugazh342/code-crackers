@@ -28,8 +28,14 @@ import {
   Code2,
   Trophy,
   Server,
-  FileCode
+  FileCode,
+  Download,
+  FileText
 } from "lucide-react";
+
+// 🟢 PDF Generation Imports
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 // 🔐 SECURITY CONFIGURATION
 const ADMIN_EMAILS = ["kpugazhmani21@gmail.com"];
@@ -41,6 +47,7 @@ export default function AdminDashboard() {
   // Data State
   const [logs, setLogs] = useState<any[]>([]);
   const [suspiciousUsers, setSuspiciousUsers] = useState<any[]>([]);
+  const [submissions, setSubmissions] = useState<any[]>([]); 
   
   // System State
   const [isContestActive, setIsContestActive] = useState(true);
@@ -50,7 +57,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (!loading) {
       if (!user || !ADMIN_EMAILS.includes(user.email || "")) {
-        router.push("/dashboard");
+        router.push("/"); // Redirect to home if not admin
         return;
       }
     }
@@ -77,7 +84,7 @@ export default function AdminDashboard() {
     }
   };
 
-  // 3. FETCH DASHBOARD DATA (Logs + Stats)
+  // 3. FETCH DASHBOARD DATA
   useEffect(() => {
     const fetchData = async () => {
       if (!user) return;
@@ -99,16 +106,21 @@ export default function AdminDashboard() {
         const susList = Object.entries(userSuspicion).map(([uid, score]) => ({ uid, score }));
         setSuspiciousUsers(susList.sort((a, b) => b.score - a.score));
 
-        // B. Fetch Counts (Stats)
-        // Note: In a huge app, we would cache this. For a contest, counting directly is fine.
+        // B. Fetch Submissions
+        const subRef = collection(db, "submissions");
+        const subQ = query(subRef, orderBy("submittedAt", "desc"));
+        const subSnap = await getDocs(subQ);
+        const rawSubs = subSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setSubmissions(rawSubs);
+
+        // C. Fetch Counts
         const userCount = await getCountFromServer(collection(db, "users"));
         const probCount = await getCountFromServer(collection(db, "problems"));
-        const subCount = await getCountFromServer(collection(db, "submissions"));
-
+        
         setStats({
           users: userCount.data().count,
           problems: probCount.data().count,
-          submissions: subCount.data().count
+          submissions: rawSubs.length
         });
 
       } catch (error) {
@@ -118,6 +130,62 @@ export default function AdminDashboard() {
 
     fetchData();
   }, [user]);
+
+  // 4. 🟢 GENERATE PDF FUNCTION (FIXED)
+  const handleDownloadPDF = () => {
+    const doc = new jsPDF();
+
+    doc.setFontSize(20);
+    doc.text("Code Crackers - Full Submission Report", 14, 22);
+    
+    doc.setFontSize(11);
+    doc.setTextColor(100);
+    doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 30);
+
+    const tableColumn = ["#", "User/Team", "Problem", "Date", "Full Source Code"];
+    const tableRows: any[] = [];
+
+    submissions.forEach((sub, index) => {
+      const dateStr = sub.submittedAt?.toDate 
+        ? sub.submittedAt.toDate().toLocaleString() 
+        : "Unknown Date";
+
+      // 🟢 THE FIX: Pass the raw code exactly as it is without cutting it.
+      // AutoTable will natively read the '\n' characters and print it line by line.
+      const fullCode = sub.code || "No code submitted.";
+
+      const rowData = [
+        index + 1,
+        sub.userName || "Unknown",
+        `${sub.problemTitle || "Unknown"}\n(${sub.language})`, // Combined to save column space
+        dateStr,
+        fullCode // The raw text
+      ];
+      tableRows.push(rowData);
+    });
+
+    autoTable(doc, {
+      head: [tableColumn],
+      body: tableRows,
+      startY: 40,
+      theme: "grid",
+      // 🟢 THE FIX: Set overflow to 'linebreak' so it wraps down the page naturally
+      styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak' },
+      headStyles: { fillColor: [37, 99, 235] },
+      columnStyles: { 
+        0: { cellWidth: 10 },
+        1: { cellWidth: 30 },
+        2: { cellWidth: 35 },
+        3: { cellWidth: 25 },
+        // 🟢 THE FIX: Give the code block the rest of the page, and set font to courier (IDE look)
+        4: { cellWidth: 80, font: "courier" } 
+      },
+      // 🟢 THE FIX: If a single code block is massive, allow it to split perfectly across pages
+      rowPageBreak: 'auto' 
+    });
+
+    doc.save("Code_Crackers_Full_Submissions.pdf");
+  };
 
   if (loading || !user) return <div className="min-h-screen bg-gray-50 flex items-center justify-center text-gray-500">Verifying Admin Access...</div>;
 
@@ -166,9 +234,8 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* 2. STATS OVERVIEW CARDS (New Section) */}
+        {/* 2. STATS OVERVIEW CARDS */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          
           <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-4">
             <div className="p-3 bg-blue-50 text-blue-600 rounded-xl">
               <Users className="w-6 h-6" />
@@ -204,11 +271,10 @@ export default function AdminDashboard() {
               <Server className="w-6 h-6" />
             </div>
             <div>
-              <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Piston Engine</p>
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Execution Engine</p>
               <p className="text-lg font-bold text-gray-900">Online ✅</p>
             </div>
           </div>
-
         </div>
 
         {/* STATUS BANNER */}
@@ -219,11 +285,11 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* 3. MAIN DASHBOARD PANELS */}
+        {/* 3. MAIN DASHBOARD PANELS (Logs & Suspicion) */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           
           {/* LEFT: SUSPICION RADAR */}
-          <div className="lg:col-span-1 bg-white border border-gray-200 rounded-2xl shadow-sm p-6 flex flex-col h-[500px]">
+          <div className="lg:col-span-1 bg-white border border-gray-200 rounded-2xl shadow-sm p-6 flex flex-col h-[400px]">
             <div className="flex items-center justify-between mb-6 shrink-0">
               <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                 <AlertTriangle className="w-5 h-5 text-orange-500" />
@@ -236,7 +302,6 @@ export default function AdminDashboard() {
                 <div className="flex flex-col items-center justify-center h-full text-gray-400 bg-gray-50 rounded-xl border-2 border-dashed border-gray-100 p-8 text-center">
                   <ShieldAlert className="w-10 h-10 mb-3 opacity-20" />
                   <p className="text-sm">Clean contest.</p>
-                  <p className="text-xs opacity-50">No flags detected yet.</p>
                 </div>
               ) : (
                 <ul className="space-y-3">
@@ -261,8 +326,8 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* RIGHT: LIVE TELEMETRY (Wider) */}
-          <div className="lg:col-span-2 bg-white border border-gray-200 rounded-2xl shadow-sm p-6 flex flex-col h-[500px]">
+          {/* RIGHT: LIVE TELEMETRY */}
+          <div className="lg:col-span-2 bg-white border border-gray-200 rounded-2xl shadow-sm p-6 flex flex-col h-[400px]">
             <div className="flex items-center justify-between mb-4 shrink-0">
               <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                 <Activity className="w-5 h-5 text-blue-500" />
@@ -306,17 +371,71 @@ export default function AdminDashboard() {
                     </div>
                   </div>
                 ))}
-                {logs.length === 0 && (
-                  <div className="flex flex-col items-center justify-center h-64 text-gray-700">
-                    <Activity className="w-8 h-8 mb-2 opacity-20 animate-pulse" />
-                    <p>Awaiting data stream...</p>
-                  </div>
-                )}
               </div>
             </div>
           </div>
-
         </div>
+
+        {/* 4. RECENT SUBMISSIONS & PDF EXPORT */}
+        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 flex flex-col">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+              <FileText className="w-6 h-6 text-indigo-500" />
+              Latest Submissions
+            </h2>
+            <button 
+              onClick={handleDownloadPDF}
+              disabled={submissions.length === 0}
+              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-5 py-2.5 rounded-lg font-bold transition shadow-sm text-sm"
+            >
+              <Download className="w-4 h-4" />
+              Export Full PDF
+            </button>
+          </div>
+
+          <div className="overflow-x-auto border border-gray-100 rounded-xl">
+            <table className="w-full text-left text-sm text-gray-600">
+              <thead className="bg-gray-50 text-gray-500 font-semibold border-b border-gray-100 uppercase text-xs">
+                <tr>
+                  <th className="px-6 py-4">User</th>
+                  <th className="px-6 py-4">Problem</th>
+                  <th className="px-6 py-4">Language</th>
+                  <th className="px-6 py-4">Submitted At</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {submissions.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-6 py-8 text-center text-gray-400 italic">
+                      No submissions found yet.
+                    </td>
+                  </tr>
+                ) : (
+                  submissions.slice(0, 10).map((sub) => ( // Show top 10 on UI
+                    <tr key={sub.id} className="hover:bg-gray-50/50 transition">
+                      <td className="px-6 py-4 font-medium text-gray-900">{sub.userName || "Unknown"}</td>
+                      <td className="px-6 py-4 text-indigo-600 font-medium">{sub.problemTitle || "N/A"}</td>
+                      <td className="px-6 py-4">
+                        <span className="bg-gray-100 text-gray-600 px-2.5 py-1 rounded text-xs font-semibold uppercase">
+                          {sub.language || "N/A"}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-gray-500 text-xs">
+                        {sub.submittedAt?.toDate ? sub.submittedAt.toDate().toLocaleString() : "Just now"}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+            {submissions.length > 10 && (
+              <div className="text-center py-3 bg-gray-50 border-t border-gray-100 text-xs text-gray-500">
+                Showing newest 10 of {submissions.length} submissions. Download PDF to see all code.
+              </div>
+            )}
+          </div>
+        </div>
+
       </div>
     </div>
   );
